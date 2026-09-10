@@ -1,0 +1,8 @@
+name = "senka-api"
+main = "src/index.js"
+compatibility_date = "2026-09-10"
+
+# 本番ではPagesの公開URLを設定します。複数指定する場合はカンマ区切りです。
+# 例: ALLOWED_ORIGIN = "https://your-project.pages.dev,https://example.com"
+[vars]
+ALLOWED_ORIGIN = "*"

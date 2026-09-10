@@ -1,11 +1,170 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>フロントエンドです</title>
+    <title>Cloudflare Workers API テスト</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-bottom: 24px; }
+        .section { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #eee; }
+        .section:last-child { border-bottom: none; }
+        h2 { color: #555; font-size: 1.2rem; margin-bottom: 12px; }
+        .input-group { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        input[type="text"] {
+            flex: 1;
+            min-width: 200px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background-color: #0052a3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .response-box {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .response-box.error { border-color: #e00; background: #fff5f5; }
+        .response-box.success { border-color: #080; background: #f5fff5; }
+        .status { font-weight: bold; margin-bottom: 8px; }
+        .status.ok { color: #080; }
+        .status.error { color: #e00; }
+        .worker-url {
+            font-family: monospace;
+            background: #f0f0f0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
 </head>
 <body>
-    <p>フロントエンド</p>
+    <div class="container">
+        <h1>Cloudflare Workers API テスト</h1>
+
+        <div class="section">
+            <h2>Worker ベース URL</h2>
+            <div class="input-group">
+                <input type="url" id="workerBaseUrl" placeholder="https://senka-api.<subdomain>.workers.dev">
+                <button id="saveWorkerUrl" type="button">接続先を保存</button>
+            </div>
+            <small>Workerを再デプロイした場合は、新しい workers.dev URLに更新してください。</small>
+        </div>
+
+        <div class="section">
+            <h2>GET /api/course</h2>
+            <button id="btnCourse" onclick="callApi('/api/course')">実行</button>
+            <div class="status" id="statusCourse"></div>
+            <div class="response-box" id="resCourse"></div>
+        </div>
+
+        <div class="section">
+            <h2>GET /api/hello?name=...</h2>
+            <div class="input-group">
+                <input type="text" id="inputName" placeholder="名前を入力 (例: 山田)" value="山田">
+                <button id="btnHello" onclick="callApi('/api/hello?name=' + encodeURIComponent(document.getElementById('inputName').value))">実行</button>
+            </div>
+            <div class="status" id="statusHello"></div>
+            <div class="response-box" id="resHello"></div>
+        </div>
+
+        <div class="section">
+            <h2>GET /api/fortune</h2>
+            <button id="btnFortune" onclick="callApi('/api/fortune')">実行</button>
+            <div class="status" id="statusFortune"></div>
+            <div class="response-box" id="resFortune"></div>
+        </div>
+
+        <div class="section">
+            <h2>GET /api/events</h2>
+            <button id="btnEvents" onclick="callApi('/api/events')">実行</button>
+            <div class="status" id="statusEvents"></div>
+            <div class="response-box" id="resEvents"></div>
+        </div>
+    </div>
+
+    <script>
+        const workerBaseUrlInput = document.getElementById('workerBaseUrl');
+        const savedWorkerUrl = localStorage.getItem('senka-worker-url');
+        if (savedWorkerUrl) workerBaseUrlInput.value = savedWorkerUrl;
+
+        document.getElementById('saveWorkerUrl').addEventListener('click', () => {
+            const workerUrl = workerBaseUrlInput.value.trim().replace(/\/$/, '');
+            workerBaseUrlInput.value = workerUrl;
+            localStorage.setItem('senka-worker-url', workerUrl);
+        });
+
+        async function callApi(path) {
+            const btn = event.target;
+            const workerBaseUrl = workerBaseUrlInput.value.trim().replace(/\/$/, '');
+            const statusId = 'status' + path.replace(/\//g, '').replace('api', '');
+            const resId = 'res' + path.replace(/\//g, '').replace('api', '');
+
+            const statusEl = document.getElementById(statusId);
+            const resEl = document.getElementById(resId);
+
+            btn.disabled = true;
+            statusEl.textContent = 'リクエスト中...';
+            statusEl.className = 'status';
+            resEl.textContent = '';
+            resEl.className = 'response-box';
+
+            if (!workerBaseUrl || workerBaseUrl.includes('<subdomain>')) {
+                statusEl.textContent = 'Worker URLを入力してください';
+                statusEl.className = 'status error';
+                resEl.textContent = '接続先の workers.dev URLを設定してから実行してください。';
+                resEl.className = 'response-box error';
+                btn.disabled = false;
+                return;
+            }
+
+            try {
+                const response = await fetch(workerBaseUrl + path);
+                const data = await response.json();
+
+                statusEl.textContent = `ステータス: ${response.status} ${response.statusText}`;
+                statusEl.className = 'status ' + (response.ok ? 'ok' : 'error');
+                resEl.textContent = JSON.stringify(data, null, 2);
+                resEl.className = 'response-box ' + (response.ok ? 'success' : 'error');
+            } catch (err) {
+                statusEl.textContent = 'エラー: ' + err.message;
+                statusEl.className = 'status error';
+                resEl.textContent = err.message;
+                resEl.className = 'response-box error';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
 </body>
 </html>
