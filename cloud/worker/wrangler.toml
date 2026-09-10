@@ -1,0 +1,17 @@
+# Cloudflare Workers 設定ファイル
+# name がそのまま公開URLの先頭になる: https://backend.tatataise091403.workers.dev
+name = "backend"
+main = "src/index.js"
+
+# 当日以前（UTC基準）の日付にすること。未来の日付だとデプロイに失敗する。
+compatibility_date = "2026-09-01"
+
+# Cloudflareダッシュボードでログ・失敗率・レイテンシを確認できるようにする
+[observability]
+enabled = true
+
+# ローカル開発（npm run dev / wrangler dev）の待ち受け先
+# pages/index.html でローカル確認するときは、WorkerのURLを http://127.0.0.1:8787 にする
+[dev]
+ip = "127.0.0.1"
+port = 8787

@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>学科紹介API 動作確認 | Cloudflare Pages × Workers</title>
+  <meta name="description" content="Cloudflare Pages の画面から、Cloudflare Workers で動く学科紹介APIを呼び出して結果を確認するページです。">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232B2420'/%3E%3Ccircle cx='10' cy='16' r='3.5' fill='%234A86CF'/%3E%3Ccircle cx='22' cy='16' r='3.5' fill='%23E07A26'/%3E%3Cpath d='M13.5 16h5' stroke='%23F6F1E9' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=BIZ+UDGothic:wght@400;700&family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #F6F1E9;
+      --surface: #FFFDF9;
+      --ink: #2B2420;
+      --muted: #6B5F57;
+      --line: #E0D3C2;
+      --pages: #2F6DB5;
+      --api: #E07A26;
+      --api-ink: #A4501A;
+      --workers: #A8452A;
+      --code-bg: #231F1C;
+      --code-ink: #F3EADF;
+      --code-key: #F2A65A;
+      --code-str: #B9D98C;
+      --code-num: #8CC3F2;
+      --ok: #2E7447;
+      --warn: #8F5500;
+      --ng: #B42318;
+      --font: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+      --font-code: "BIZ UDGothic", ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { -webkit-text-size-adjust: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font);
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+
+    /* ---------- 見出し ---------- */
+    .intro h1 {
+      margin: 0;
+      font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem);
+      line-height: 1.3;
+      letter-spacing: 0.02em;
+    }
+    .intro p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 40em;
+    }
+
+    /* ---------- 通信の流れ（構成図） ---------- */
+    .flow {
+      list-style: none;
+      margin: 32px 0 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 28px;
+      counter-reset: flow;
+    }
+    .flow-step {
+      --layer: var(--pages);
+      position: relative;
+      padding: 16px 16px 14px;
+      background: var(--surface);
+      border: 1.5px solid var(--line);
+      border-radius: 14px;
+      transition: border-color .2s ease, background-color .2s ease;
+    }
+    .flow-step[data-layer="api"] { --layer: var(--api); }
+    .flow-step[data-layer="workers"] { --layer: var(--workers); }
+
+    /* ステップ間の矢印 */
+    .flow-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -21px;
+      width: 14px;
+      height: 14px;
+      border-top: 2.5px solid var(--line);
+      border-right: 2.5px solid var(--line);
+      transform: translateY(-50%) rotate(45deg);
+      transition: border-color .2s ease;
+    }
+    .flow-step[data-state="done"]:not(:last-child)::after,
+    .flow-step[data-state="warn"]:not(:last-child)::after { border-color: var(--layer); }
+
+    .flow-layer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .8125rem;
+      font-weight: 700;
+      color: var(--layer);
+    }
+    .flow-layer::before {
+      counter-increment: flow;
+      content: counter(flow);
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1.5px solid currentColor;
+      font-size: .75rem;
+      line-height: 1;
+    }
+    .flow-step[data-layer="api"] .flow-layer { color: var(--api-ink); }
+    .flow-title {
+      margin: 6px 0 0;
+      font-size: 1.0625rem;
+      font-weight: 700;
+    }
+    .flow-detail {
+      margin: 2px 0 0;
+      min-height: 1.6em;
+      font-family: var(--font-code);
+      font-size: .8125rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .flow-step[data-state="active"] { border-color: var(--layer); }
+    .flow-step[data-state="active"] .flow-layer::before { animation: pulse 1s ease-in-out infinite; }
+    .flow-step[data-state="done"] { border-color: var(--layer); }
+    .flow-step[data-state="done"] .flow-layer::before {
+      background: var(--layer);
+      border-color: var(--layer);
+      color: var(--surface);
+    }
+    .flow-step[data-layer="api"][data-state="done"] .flow-layer::before { background: var(--api); border-color: var(--api); }
+    .flow-step[data-state="warn"] { border-color: var(--warn); background: #FFF6E6; }
+    .flow-step[data-state="warn"] .flow-detail { color: var(--warn); font-weight: 700; }
+    .flow-step[data-state="error"] { border-color: var(--ng); background: #FDEEEC; }
+    .flow-step[data-state="error"] .flow-detail { color: var(--ng); font-weight: 700; }
+
+    @keyframes pulse {
+      50% { background: var(--layer); color: var(--surface); }
+    }
+
+    /* ---------- 操作と結果 ---------- */
+    .workspace {
+      margin-top: 36px;
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+    }
+    .panel h2 {
+      margin: 0 0 16px;
+      font-size: 1.125rem;
+      line-height: 1.4;
+    }
+    .panel + .panel { margin-top: 24px; }
+
+    label { display: block; font-weight: 700; font-size: .9375rem; }
+    .field-help { margin: 4px 0 0; font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
+
+    input[type="url"], input[type="text"] {
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 1rem;
+      color: var(--ink);
+      background: #fff;
+      border: 1.5px solid var(--line);
+      border-radius: 10px;
+    }
+    input[type="url"] { font-family: var(--font-code); font-size: .9375rem; }
+    input:hover { border-color: #CDBDA8; }
+
+    :focus-visible {
+      outline: 3px solid var(--pages);
+      outline-offset: 2px;
+    }
+    input:focus-visible { outline-offset: 0; border-color: var(--pages); }
+
+    .notice {
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #FFF6E6;
+      color: var(--warn);
+      font-size: .875rem;
+    }
+
+    .actions { display: grid; gap: 10px; }
+
+    .call {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      padding: 12px 16px;
+      font: inherit;
+      text-align: left;
+      color: var(--ink);
+      background: #fff;
+      border: 1.5px solid var(--line);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: border-color .15s ease, background-color .15s ease;
+    }
+    .call:hover { border-color: var(--api); background: #FFF8F1; }
+    .call:active { background: #FDEBD9; }
+    .call:disabled { cursor: progress; opacity: .6; }
+    .call-label { font-weight: 700; }
+    .call-path { font-family: var(--font-code); font-size: .8125rem; color: var(--api-ink); white-space: nowrap; }
+
+    .hello {
+      padding: 14px 16px 16px;
+      border: 1.5px dashed var(--line);
+      border-radius: 12px;
+    }
+    .hello-row { display: flex; gap: 10px; margin-top: 6px; }
+    .hello-row input { margin-top: 0; flex: 1; min-width: 0; }
+    .hello-row .call { width: auto; flex: none; }
+
+    /* 結果 */
+    .result-panel { min-height: 420px; }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px 14px;
+      margin-bottom: 14px;
+    }
+    .status-code {
+      font-family: var(--font-code);
+      font-weight: 700;
+      font-size: 1.5rem;
+      line-height: 1.2;
+    }
+    .status-code[data-kind="ok"] { color: var(--ok); }
+    .status-code[data-kind="warn"] { color: var(--warn); }
+    .status-code[data-kind="ng"] { color: var(--ng); }
+    .status-meta { font-size: .8125rem; color: var(--muted); }
+    .request-url {
+      flex-basis: 100%;
+      font-family: var(--font-code);
+      font-size: .8125rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    #result { margin-bottom: 16px; }
+    #result:empty { display: none; }
+    .result-empty { margin: 0 0 16px; color: var(--muted); }
+    .summary-message { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.5; }
+    .summary-sub { margin: 4px 0 0; color: var(--muted); }
+    .summary-error { margin: 0; font-size: 1.125rem; font-weight: 700; color: var(--ng); }
+    .fortune { display: flex; align-items: center; gap: 16px; }
+    .fortune-mark {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      background: var(--workers);
+      color: var(--surface);
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+    .chips li { padding: 2px 10px; border-radius: 999px; background: #EEF3FA; color: #245A96; font-size: .8125rem; }
+    .events { margin: 0; padding: 0; list-style: none; }
+    .events li { display: grid; grid-template-columns: 7.5em 1fr; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .events li:last-child { border-bottom: 0; }
+    .events time { font-family: var(--font-code); font-size: .875rem; color: var(--api-ink); padding-top: .15em; }
+    .events .place { grid-column: 2; font-size: .8125rem; color: var(--muted); }
+
+    .hint {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #FDEEEC;
+      color: #7A1A12;
+      font-size: .9375rem;
+    }
+    .hint strong { display: block; margin-bottom: 2px; }
+
+    .json-label { margin: 0 0 6px; font-size: .8125rem; font-weight: 700; color: var(--muted); }
+    pre.json {
+      margin: 0;
+      padding: 18px 20px;
+      max-height: 460px;
+      overflow: auto;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 14px;
+      font-family: var(--font-code);
+      font-size: .875rem;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      tab-size: 2;
+    }
+    .json .k { color: var(--code-key); }
+    .json .s { color: var(--code-str); }
+    .json .n { color: var(--code-num); }
+
+    .footer { margin-top: 40px; font-size: .8125rem; color: var(--muted); }
+
+    [hidden] { display: none !important; }
+
+    /* ---------- スマホ・タブレット ---------- */
+    @media (max-width: 900px) {
+      .workspace { grid-template-columns: 1fr; }
+      .result-panel { min-height: 0; }
+    }
+    @media (max-width: 760px) {
+      .page { padding: 28px 16px 48px; }
+      .flow { grid-template-columns: 1fr 1fr; gap: 12px; }
+      .flow-step:not(:last-child)::after { display: none; }
+      .panel { padding: 18px; }
+    }
+    @media (max-width: 420px) {
+      .flow { grid-template-columns: 1fr; gap: 8px; }
+      .flow-step { padding: 12px 14px; }
+      .hello-row { flex-direction: column; }
+      .hello-row .call { width: 100%; }
+      .events li { grid-template-columns: 1fr; }
+      .events .place { grid-column: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="intro">
+      <h1>学科紹介API 動作確認</h1>
+      <p>Pagesの画面からWorkersのAPIを呼び出し、返ってきたJSONを表示します。ボタンを押すと、下の図で通信がどこまで進んだか確認できます。</p>
+    </header>
+
+    <!-- 通信の流れ：画面 → API → Workers → 画面 -->
+    <ol class="flow" aria-label="通信の流れ">
+      <li class="flow-step" data-layer="pages" data-state="idle">
+        <div class="flow-layer">Pages（フロントエンド）</div>
+        <p class="flow-title">画面から要求</p>
+        <p class="flow-detail" data-detail>fetch() で送信</p>
+      </li>
+      <li class="flow-step" data-layer="api" data-state="idle">
+        <div class="flow-layer">API</div>
+        <p class="flow-title">APIが受け取る</p>
+        <p class="flow-detail" data-detail>HTTP で通信</p>
+      </li>
+      <li class="flow-step" data-layer="workers" data-state="idle">
+        <div class="flow-layer">Workers（バックエンド）</div>
+        <p class="flow-title">Workersが処理</p>
+        <p class="flow-detail" data-detail>Response を返す</p>
+      </li>
+      <li class="flow-step" data-layer="pages" data-state="idle">
+        <div class="flow-layer">Pages（フロントエンド）</div>
+        <p class="flow-title">画面へ表示</p>
+        <p class="flow-detail" data-detail>JSON を表示</p>
+      </li>
+    </ol>
+
+    <div class="workspace">
+      <div>
+        <section class="panel" aria-labelledby="connection-heading">
+          <h2 id="connection-heading">接続先</h2>
+          <label for="worker-base-url">WorkerのURL</label>
+          <!-- 本番のWorkerのURL。ローカルで試すときは http://127.0.0.1:8787 に書き換える -->
+          <input id="worker-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+                 value="https://backend.tatataise091403.workers.dev"
+                 placeholder="https://backend.tatataise091403.workers.dev">
+          <p class="field-help">ローカルで試すときは http://127.0.0.1:8787 に書き換え、worker フォルダーで npm run dev を起動します。</p>
+          <p class="notice" id="url-notice" role="status" hidden></p>
+        </section>
+
+        <section class="panel" aria-labelledby="actions-heading">
+          <h2 id="actions-heading">APIを呼び出す</h2>
+          <div class="actions">
+            <button type="button" class="call" data-endpoint="index">
+              <span class="call-label">稼働状況を確認</span>
+              <span class="call-path">/api</span>
+            </button>
+            <button type="button" class="call" data-endpoint="course">
+              <span class="call-label">学科紹介を取得</span>
+              <span class="call-path">/api/course</span>
+            </button>
+
+            <div class="hello">
+              <label for="hello-name">名前付きの挨拶</label>
+              <div class="hello-row">
+                <input id="hello-name" type="text" maxlength="40" autocomplete="off" value="山田" placeholder="例：山田">
+                <button type="button" class="call" data-endpoint="hello">
+                  <span class="call-label">挨拶してもらう</span>
+                </button>
+              </div>
+              <p class="field-help">/api/hello?name=… 空欄で送ると 400 が返ります。</p>
+            </div>
+
+            <button type="button" class="call" data-endpoint="fortune">
+              <span class="call-label">おみくじを引く</span>
+              <span class="call-path">/api/fortune</span>
+            </button>
+            <button type="button" class="call" data-endpoint="events">
+              <span class="call-label">イベント一覧を取得</span>
+              <span class="call-path">/api/events</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel result-panel" aria-labelledby="result-heading" aria-live="polite">
+        <h2 id="result-heading">結果</h2>
+
+        <div class="status-line" id="status-line" hidden>
+          <span class="status-code" id="status-code"></span>
+          <span class="status-meta" id="status-meta"></span>
+          <span class="request-url" id="request-url"></span>
+        </div>
+
+        <p class="result-empty" id="result-empty">ボタンを押すと、Workerから返ってきた内容がここに表示されます。</p>
+        <div id="result"></div>
+
+        <p class="hint" id="hint" hidden></p>
+
+        <div id="json-block" hidden>
+          <p class="json-label" id="json-label">受け取ったJSON</p>
+          <pre class="json" id="json" tabindex="0"></pre>
+        </div>
+      </section>
+    </div>
+
+    <p class="footer">表示されるデータはすべて架空のものです。</p>
+  </main>
+
+  <script>
+    // ============================================================
+    // 設定
+    // ============================================================
+    const TIMEOUT_MS = 10000;
+
+    const STATUS_TEXT = {
+      200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+      405: "Method Not Allowed", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable"
+    };
+
+    // ============================================================
+    // 画面の要素
+    // ============================================================
+    const baseUrlInput = document.querySelector("#worker-base-url");
+    const urlNotice = document.querySelector("#url-notice");
+    const nameInput = document.querySelector("#hello-name");
+    const callButtons = document.querySelectorAll("[data-endpoint]");
+    const steps = document.querySelectorAll(".flow-step");
+
+    const statusLine = document.querySelector("#status-line");
+    const statusCode = document.querySelector("#status-code");
+    const statusMeta = document.querySelector("#status-meta");
+    const requestUrl = document.querySelector("#request-url");
+    const resultPanel = document.querySelector(".result-panel");
+    const resultEmpty = document.querySelector("#result-empty");
+    const result = document.querySelector("#result");
+    const hint = document.querySelector("#hint");
+    const jsonBlock = document.querySelector("#json-block");
+    const jsonLabel = document.querySelector("#json-label");
+    const jsonView = document.querySelector("#json");
+
+    // ============================================================
+    // イベント登録
+    // ============================================================
+    callButtons.forEach((button) => {
+      button.addEventListener("click", () => callApi(button.dataset.endpoint));
+    });
+
+    nameInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        callApi("hello");
+      }
+    });
+
+    baseUrlInput.addEventListener("input", checkBaseUrl);
+    baseUrlInput.addEventListener("change", () => {
+      // 末尾の / やパスは不要なので、オリジン部分だけに整える
+      const origin = getBaseOrigin();
+      if (origin) baseUrlInput.value = origin;
+      checkBaseUrl();
+    });
+    checkBaseUrl();
+
+    // ============================================================
+    // APIの呼び出し
+    // ============================================================
+    async function callApi(endpoint) {
+      resetView();
+
+      const path = buildPath(endpoint);
+      setStep(0, "active", `fetch("${readable(path)}")`);
+
+      const origin = getBaseOrigin();
+      if (!origin) {
+        setStep(0, "error", "URLの形式が正しくありません");
+        showHint("画面を確認", "WorkerのURLを http:// または https:// から始まる形で入力してください。例：https://backend.tatataise091403.workers.dev");
+        return;
+      }
+
+      const url = new URL(path, origin).toString();
+      setBusy(true);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      const startedAt = performance.now();
+
+      try {
+        // ① 画面から要求 → ② APIが受け取る
+        setStep(0, "done", `fetch("${readable(path)}")`);
+        setStep(1, "active", new URL(origin).host);
+
+        let response;
+        try {
+          response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+        } catch (error) {
+          const timedOut = error.name === "AbortError";
+          setStep(1, "error", timedOut ? "応答がありません" : "接続できません");
+          showStatus(null, url, performance.now() - startedAt);
+          showHint(
+            "通信を確認",
+            timedOut
+              ? `${TIMEOUT_MS / 1000}秒待っても応答がありませんでした。WorkerのURLと、Workerが起動しているかを確認してください。`
+              : "Workerに接続できませんでした。URLが正しいか、ローカルなら worker フォルダーで npm run dev が起動しているかを確認してください。公開後であれば、ブラウザの開発者ツール（Console / Network）でCORSエラーが出ていないかも確認してください。"
+          );
+          return;
+        }
+
+        // ② → ③ Workersが処理してResponseを返した
+        const elapsed = performance.now() - startedAt;
+        const statusLabel = `${response.status} ${response.statusText || STATUS_TEXT[response.status] || ""}`.trim();
+        setStep(1, "done", new URL(origin).host);
+        setStep(2, response.ok ? "done" : "warn", statusLabel);
+        showStatus(response, url, elapsed);
+
+        // ④ 画面へ表示
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          setStep(3, "error", "JSONとして読めません");
+          showRaw(text);
+          showHint("通信を確認", "応答がJSONではありませんでした。WorkerのURLが、PagesのURLなど別の場所を指していないか確認してください。");
+          return;
+        }
+
+        showJson(data);
+        renderSummary(endpoint, data, response.ok);
+        setStep(3, "done", response.ok ? "結果を表示しました" : "エラー内容を表示しました");
+
+        if (!response.ok) {
+          showHint(...hintForStatus(response.status));
+        }
+      } finally {
+        clearTimeout(timer);
+        setBusy(false);
+        revealResult();
+      }
+    }
+
+    // 表示用：%E5%B1%B1… のようにエンコードされた部分を読める文字に戻す
+    function readable(text) {
+      try {
+        return decodeURI(text);
+      } catch {
+        return text;
+      }
+    }
+
+    // スマホなど1カラム表示のときは、結果が見える位置までスクロールする
+    function revealResult() {
+      if (!window.matchMedia("(max-width: 900px)").matches) return;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      resultPanel.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    }
+
+    function buildPath(endpoint) {
+      switch (endpoint) {
+        case "index":
+          return "/api";
+        case "course":
+          return "/api/course";
+        case "hello": {
+          const params = new URLSearchParams({ name: nameInput.value });
+          return `/api/hello?${params}`;
+        }
+        case "fortune":
+          return "/api/fortune";
+        case "events":
+          return "/api/events";
+        default:
+          return "/api";
+      }
+    }
+
+    function getBaseOrigin() {
+      try {
+        const url = new URL(baseUrlInput.value.trim());
+        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+        return url.origin;
+      } catch {
+        return null;
+      }
+    }
+
+    function hintForStatus(status) {
+      if (status === 400) return ["入力を確認", "送った値がAPIの条件に合っていません。名前が空欄になっていないか、長すぎないかを確認してください。"];
+      if (status === 403) return ["処理を確認", "このページのURLがWorkerの許可オリジン（worker/src/index.js の ALLOWED_ORIGINS）に含まれているか確認してください。"];
+      if (status === 404) return ["通信を確認", "パスが正しいか、WorkerのURLが古いURLのままになっていないかを確認してください。"];
+      if (status === 405) return ["通信を確認", "GETで呼び出しているか確認してください。"];
+      if (status >= 500) return ["処理を確認", "Workers側でエラーが起きています。wrangler dev のターミナル、またはCloudflareダッシュボードのログを確認してください。"];
+      return ["通信を確認", "想定外のステータスが返りました。Network タブでレスポンスを確認してください。"];
+    }
+
+    // ============================================================
+    // 表示まわり
+    // ============================================================
+    function setStep(index, state, detail) {
+      const step = steps[index];
+      step.dataset.state = state;
+      if (detail !== undefined) {
+        step.querySelector("[data-detail]").textContent = detail;
+      }
+    }
+
+    function resetView() {
+      const defaults = ["fetch() で送信", "HTTP で通信", "Response を返す", "JSON を表示"];
+      steps.forEach((step, i) => setStep(i, "idle", defaults[i]));
+      statusLine.hidden = true;
+      hint.hidden = true;
+      jsonBlock.hidden = true;
+      result.replaceChildren();
+      resultEmpty.hidden = true;
+    }
+
+    function setBusy(isBusy) {
+      callButtons.forEach((button) => { button.disabled = isBusy; });
+    }
+
+    function showStatus(response, url, elapsedMs) {
+      statusLine.hidden = false;
+      if (response) {
+        statusCode.textContent = `${response.status} ${response.statusText || STATUS_TEXT[response.status] || ""}`.trim();
+        statusCode.dataset.kind = response.ok ? "ok" : response.status < 500 ? "warn" : "ng";
+      } else {
+        statusCode.textContent = "接続エラー";
+        statusCode.dataset.kind = "ng";
+      }
+      statusMeta.textContent = `${Math.round(elapsedMs)} ms`;
+      requestUrl.textContent = `GET ${readable(url)}`;
+    }
+
+    function showHint(title, message) {
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      hint.replaceChildren(strong, document.createTextNode(message));
+      hint.hidden = false;
+    }
+
+    function showJson(data) {
+      jsonLabel.textContent = "受け取ったJSON";
+      jsonView.replaceChildren(...highlightJson(JSON.stringify(data, null, 2)));
+      jsonBlock.hidden = false;
+    }
+
+    function showRaw(text) {
+      jsonLabel.textContent = "受け取った内容（先頭のみ）";
+      jsonView.textContent = text.slice(0, 1500) || "（空のレスポンス）";
+      jsonBlock.hidden = false;
+    }
+
+    // JSON文字列を色分けする（innerHTMLは使わず、要素を組み立てる）
+    function highlightJson(json) {
+      const nodes = [];
+      const pattern = /("(?:\\.|[^"\\])*")(\s*:)?|\b(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)\b/g;
+      let last = 0;
+      for (const match of json.matchAll(pattern)) {
+        nodes.push(document.createTextNode(json.slice(last, match.index)));
+        const span = document.createElement("span");
+        if (match[1]) {
+          span.className = match[2] ? "k" : "s";
+          span.textContent = match[1];
+          nodes.push(span);
+          if (match[2]) nodes.push(document.createTextNode(match[2]));
+        } else {
+          span.className = "n";
+          span.textContent = match[3];
+          nodes.push(span);
+        }
+        last = match.index + match[0].length;
+      }
+      nodes.push(document.createTextNode(json.slice(last)));
+      return nodes;
+    }
+
+    // 受け取ったデータを、エンドポイントごとに読みやすく表示する
+    function renderSummary(endpoint, data, ok) {
+      if (!ok || data.error) {
+        result.append(el("p", "summary-error", data.error || "エラーが返されました。"));
+        return;
+      }
+
+      if (endpoint === "course") {
+        result.append(el("p", "summary-message", data.name || data.message));
+        if (data.description) result.append(el("p", "summary-sub", data.description));
+        if (Array.isArray(data.subjects)) {
+          const list = el("ul", "chips");
+          data.subjects.forEach((subject) => list.append(el("li", "", subject)));
+          result.append(list);
+        }
+        return;
+      }
+
+      if (endpoint === "fortune") {
+        const box = el("div", "fortune");
+        const text = el("div", "");
+        text.append(el("p", "summary-message", data.message), el("p", "summary-sub", data.date || ""));
+        box.append(el("div", "fortune-mark", data.fortune), text);
+        result.append(box);
+        return;
+      }
+
+      if (endpoint === "events" && Array.isArray(data.events)) {
+        const list = el("ol", "events");
+        data.events.forEach((event) => {
+          const item = document.createElement("li");
+          const time = el("time", "", event.date);
+          time.dateTime = event.date;
+          item.append(time, el("span", "", event.title), el("span", "place", event.place));
+          list.append(item);
+        });
+        result.append(list);
+        return;
+      }
+
+      // /api と /api/hello は message を表示する（スライドの #result と同じ考え方）
+      result.append(el("p", "summary-message", data.message || "応答を受け取りました。"));
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    // 公開ページから 127.0.0.1 を呼んでいる、などの設定ミスに気づけるようにする
+    function checkBaseUrl() {
+      const origin = getBaseOrigin();
+      let message = "";
+
+      if (!origin) {
+        message = "URLは http:// または https:// から入力してください。";
+      } else {
+        const target = new URL(origin);
+        const isLocalTarget = ["127.0.0.1", "localhost"].includes(target.hostname);
+        const isLocalPage = location.protocol === "file:" || ["127.0.0.1", "localhost"].includes(location.hostname);
+
+        if (isLocalTarget && !isLocalPage) {
+          message = "公開中のページからローカル（127.0.0.1）のWorkerを指しています。本番のWorkerのURLに変更してください。";
+        } else if (location.protocol === "https:" && target.protocol === "http:") {
+          message = "https のページから http のURLは呼び出せません。https のURLを入力してください。";
+        }
+      }
+
+      urlNotice.textContent = message;
+      urlNotice.hidden = message === "";
+    }
+  </script>
+</body>
+</html>

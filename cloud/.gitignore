@@ -1,0 +1,13 @@
+# 依存パッケージ
+node_modules/
+
+# Wrangler のローカル作業ファイル
+.wrangler/
+
+# ローカル用の秘密情報（コミットしない）
+.dev.vars
+.env
+
+# OS / エディター
+.DS_Store
+Thumbs.db
